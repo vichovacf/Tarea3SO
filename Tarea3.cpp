@@ -19,7 +19,7 @@ const string COLOR_RAM   = "\033[32m";  // Verde para RAM
 const string COLOR_SWAP  = "\033[36m";  // Cyan para SWAP
 const string COLOR_INFO  = "\033[33m";  // Amarillo para información general
 const string COLOR_ERROR = "\033[31m";  // Rojo para errores
-const string COLOR_FAULT = "\033[35m";  // Magenta para page faults
+const string COLOR_FALLO = "\033[35m";  // Magenta para fallos de página
 const string COLOR_RESET = "\033[0m";   // Resetear color
 
 // ============================================================================
@@ -27,480 +27,500 @@ const string COLOR_RESET = "\033[0m";   // Resetear color
 // ============================================================================
 
 // Estructura que representa una página de memoria
-struct Page {
+struct Pagina {
     int pid;                    // ID del proceso dueño de esta página
-    int page_id;               // ID local de la página dentro del proceso (0, 1, 2...)
-    bool in_ram;               // True si la página está actualmente en RAM
-    int frame_index;           // Índice del frame en RAM (-1 si no está en RAM)
-    int swap_index;            // Índice del frame en SWAP (-1 si no está en SWAP)
-    unsigned long long load_time; // Tiempo de carga (para política FIFO)
+    int id_pagina;              // ID local de la página dentro del proceso (0, 1, 2...)
+    int id_global;              // ID global único de la página
+    bool en_ram;                // True si la página está actualmente en RAM
+    int indice_marco;           // Índice del marco en RAM (-1 si no está en RAM)
+    int indice_swap;            // Índice del marco en SWAP (-1 si no está en SWAP)
+    unsigned long long tiempo_carga; // Tiempo de carga (para política FIFO)
     
     // Constructor de la página
-    Page(int p_pid, int p_page_id) 
-        : pid(p_pid), page_id(p_page_id), in_ram(false), 
-          frame_index(-1), swap_index(-1), load_time(0) {}
+    Pagina(int p_pid, int p_id_pagina, int p_id_global): 
+        pid(p_pid), 
+        id_pagina(p_id_pagina),
+        id_global(p_id_global),
+        en_ram(false), 
+        indice_marco(-1), 
+        indice_swap(-1), 
+        tiempo_carga(0) {}
 };
 
 // Estructura que representa un proceso
-struct Process {
+struct Proceso {
     int pid;                   // ID único del proceso
-    int size_mb;              // Tamaño total del proceso en MB
-    int page_count;           // Número de páginas que ocupa el proceso
-    bool active;              // Si el proceso está activo (no finalizado)
-    vector<int> page_indices; // Índices de las páginas en el vector global 'pages'
+    int tamano_mb;             // Tamaño total del proceso en MB
+    int num_paginas;           // Número de páginas que ocupa el proceso
+    bool activo;               // Si el proceso está activo (no finalizado)
+    vector<int> indices_paginas; // Índices de las páginas en el vector global 'paginas'
     
     // Constructor del proceso
-    Process(int p_pid, int p_size_mb, int p_page_count)
-        : pid(p_pid), size_mb(p_size_mb), page_count(p_page_count), 
-          active(true) {}
+    Proceso(int p_pid, int p_tamano_mb, int p_num_paginas): 
+        pid(p_pid), 
+        tamano_mb(p_tamano_mb), 
+        num_paginas(p_num_paginas), 
+        activo(true) {}
 };
 
 // ============================================================================
 // CLASE PRINCIPAL - SIMULADOR DE MEMORIA
 // ============================================================================
 
-class MemorySimulator {
+class SimuladorMemoria {
 private:
     // Configuración del sistema
-    int physical_memory_mb;    // Tamaño de la memoria física en MB
-    int page_size_mb;         // Tamaño de cada página en MB
-    int min_process_mb;       // Tamaño mínimo de proceso en MB
-    int max_process_mb;       // Tamaño máximo de proceso en MB
+    int memoria_fisica_mb;      // Tamaño de la memoria física en MB
+    int tamano_pagina_mb;       // Tamaño de cada página en MB
+    int proceso_min_mb;         // Tamaño mínimo de proceso en MB
+    int proceso_max_mb;         // Tamaño máximo de proceso en MB
     
     // Representación de la memoria
-    vector<int> ram_frames;    // Vector de frames de RAM: -1 = libre, índice = página
-    vector<int> swap_frames;   // Vector de frames de SWAP: -1 = libre, índice = página
+    vector<int> marcos_ram;     // Vector de marcos de RAM: -1 = libre, índice = página
+    vector<int> marcos_swap;    // Vector de marcos de SWAP: -1 = libre, índice = página
     
     // Listas de procesos y páginas
-    vector<Process> processes; // Todos los procesos creados
-    vector<Page> pages;        // Todas las páginas de todos los procesos
+    vector<Proceso> procesos;   // Todos los procesos creados
+    vector<Pagina> paginas;     // Todas las páginas de todos los procesos
     
     // Contadores y estado interno
-    int next_pid;              // Siguiente ID disponible para procesos
-    unsigned long long load_counter; // Contador para tiempo de carga (FIFO)
+    int siguiente_pid;          // Siguiente ID disponible para procesos
+    int siguiente_id_pagina;    // Siguiente ID global para páginas
+    unsigned long long contador_carga; // Contador para tiempo de carga (FIFO)
     
     // Estadísticas para reporte final
-    int page_faults;          // Número total de page faults ocurridos
-    int processes_created;    // Número total de procesos creados
-    int processes_finished;   // Número total de procesos finalizados
+    int fallos_pagina;          // Número total de fallos de página ocurridos
+    int procesos_creados;       // Número total de procesos creados
+    int procesos_finalizados;   // Número total de procesos finalizados
     
     // Generador de números aleatorios
-    mt19937 random_generator;
+    mt19937 generador_aleatorio;
 
 public:
     // Constructor principal - inicializa toda la simulación
-    MemorySimulator(int phys_mb, int page_mb, int min_proc, int max_proc) 
-        : physical_memory_mb(phys_mb), 
-          page_size_mb(page_mb),
-          min_process_mb(min_proc), 
-          max_process_mb(max_proc),
-          next_pid(1), 
-          load_counter(0), 
-          page_faults(0),
-          processes_created(0), 
-          processes_finished(0),
-          random_generator(random_device{}()) {
+    SimuladorMemoria(int mem_fisica_mb, int tam_pagina_mb, int proc_min_mb, int proc_max_mb) 
+        : memoria_fisica_mb(mem_fisica_mb),  // Memoria fisica en MB
+          tamano_pagina_mb(tam_pagina_mb),   // Tamaño de página en MB
+          proceso_min_mb(proc_min_mb),       // Tamaño minimo de cada proceso en MB
+          proceso_max_mb(proc_max_mb),       // Tamaño maximo de cada proceso en MB
+          siguiente_pid(1),                  // Empezar PIDs desde 1
+          siguiente_id_pagina(1),            // Empezar IDs de páginas desde 1
+          contador_carga(0),                 // Contador de carga inicializado en 0
+          fallos_pagina(0),                  // Contador de fallos de página en 0
+          procesos_creados(0),               // Contador de procesos creados en 0
+          procesos_finalizados(0),           // Contador de procesos finalizados en 0
+          generador_aleatorio(random_device{}()) {
         
-        initializeMemory(); // Inicializar la memoria del sistema
+        inicializarMemoria(); // Inicializar la memoria del sistema
     }
-//waton si lees esto, te quiero muxo
-private:
+
     // Inicializa la memoria física y virtual
-    void initializeMemory() {
-        // Calcular memoria virtual (entre 1.5 y 4.5 veces la física, como pide la tarea gordis)
-        uniform_real_distribution<double> factor_dist(1.5, 4.5);
-        double virtual_memory_mb = physical_memory_mb * factor_dist(random_generator);
+    void inicializarMemoria() {
+        // Calcular memoria virtual (entre 1.5 y 4.5 veces la física)
+        uniform_real_distribution<double> distribucion_factor(1.5, 4.5);
+        double memoria_virtual_mb = memoria_fisica_mb * distribucion_factor(generador_aleatorio);
         
-        // Calcular número de frames
-        int ram_frames_count = physical_memory_mb / page_size_mb;  // Frames en RAM
-        int total_frames_count = virtual_memory_mb / page_size_mb; // Frames totales (RAM + SWAP)
-        int swap_frames_count = total_frames_count - ram_frames_count; // Frames en SWAP
+        // Calcular número de marcos
+        int num_marcos_ram = memoria_fisica_mb / tamano_pagina_mb;      // Marcos en RAM
+        int total_marcos = memoria_virtual_mb / tamano_pagina_mb;       // Marcos totales (RAM + SWAP)
+        int num_marcos_swap = total_marcos - num_marcos_ram;            // Marcos en SWAP
         
         // Asegurar valores mínimos
-        if (ram_frames_count <= 0) ram_frames_count = 1;
-        if (swap_frames_count <= 0) swap_frames_count = total_frames_count; // Asegurar suficiente swap
+        if (num_marcos_ram <= 0) num_marcos_ram = 1;
+        if (num_marcos_swap <= 0) num_marcos_swap = total_marcos; // Asegurar suficiente swap
         
         // Inicializar vectores de memoria (todos libres inicialmente: -1)
-        ram_frames.resize(ram_frames_count, -1);
-        swap_frames.resize(swap_frames_count, -1);
+        marcos_ram.resize(num_marcos_ram, -1);
+        marcos_swap.resize(num_marcos_swap, -1);
         
         // Mostrar configuración inicial
         cout << COLOR_INFO << "=== CONFIGURACIÓN INICIAL ===" << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Memoria Física: " << physical_memory_mb << " MB" << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Memoria Virtual: " << virtual_memory_mb << " MB" << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Tamaño Página: " << page_size_mb << " MB" << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Frames RAM: " << ram_frames_count << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Frames SWAP: " << swap_frames_count << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Memoria Física: " << memoria_fisica_mb << " MB" << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Memoria Virtual: " << memoria_virtual_mb << " MB" << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Tamaño Página: " << tamano_pagina_mb << " MB" << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Marcos RAM: " << num_marcos_ram << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Marcos SWAP: " << num_marcos_swap << COLOR_RESET << endl;
         cout << COLOR_INFO << "=============================" << COLOR_RESET << endl;
     }
 
-    // Encuentra un frame libre en un vector de frames (RAM o SWAP)
-    int findFreeFrame(const vector<int>& frames) {
-        for (size_t i = 0; i < frames.size(); ++i) {
-            if (frames[i] == -1) return i; // Retorna el índice del primer frame libre
+    // Encuentra un marco libre en un vector de marcos (RAM o SWAP)
+    int encontrarMarcoLibre(const vector<int>& marcos) {
+        for (size_t i = 0; i < marcos.size(); ++i) {
+            if (marcos[i] == -1) return i; // Retorna el índice del primer marco libre
         }
-        return -1; // No hay frames libres
+        return -1; // No hay marcos libres
     }
 
     // Política FIFO: selecciona la página más antigua en RAM para reemplazar
-    int chooseVictimPage() {
-        int victim = -1;
-        unsigned long long oldest_time = numeric_limits<unsigned long long>::max();
+    int elegirPaginaVictima() {
+        int victima = -1;
+        unsigned long long tiempo_mas_antiguo = numeric_limits<unsigned long long>::max();
         
         // Buscar entre todas las páginas en RAM
-        for (size_t i = 0; i < pages.size(); ++i) {
-            if (pages[i].in_ram && pages[i].pid != -1 && pages[i].load_time < oldest_time) {
-                oldest_time = pages[i].load_time;
-                victim = i; // Actualizar víctima con la página más antigua
+        for (size_t i = 0; i < paginas.size(); ++i) {
+            if (paginas[i].en_ram && paginas[i].pid != -1 && paginas[i].tiempo_carga < tiempo_mas_antiguo) {
+                tiempo_mas_antiguo = paginas[i].tiempo_carga;
+                victima = i; // Actualizar víctima con la página más antigua
             }
         }
-        return victim; // Retorna -1 si no hay páginas en RAM
+        return victima; // Retorna -1 si no hay páginas en RAM
     }
 
-public:
     // Crea un nuevo proceso con tamaño aleatorio
-    bool createProcess() {
+    bool crearProceso() {
         // Generar tamaño aleatorio del proceso dentro del rango especificado
-        uniform_int_distribution<int> size_dist(min_process_mb, max_process_mb);
-        int process_size = size_dist(random_generator);
-        int page_count = ceil(static_cast<double>(process_size) / page_size_mb);
+        uniform_int_distribution<int> distribucion_tamano(proceso_min_mb, proceso_max_mb);
+        int tamano_proceso = distribucion_tamano(generador_aleatorio);
+        int num_paginas = ceil(static_cast<double>(tamano_proceso) / tamano_pagina_mb);
         
         // Crear nuevo proceso
-        Process new_process(next_pid++, process_size, page_count);
+        Proceso nuevo_proceso(siguiente_pid++, tamano_proceso, num_paginas);
         
-        cout << COLOR_INFO << "[CREACIÓN] Proceso PID=" << new_process.pid 
-             << " (" << process_size << " MB, " << page_count << " páginas)" << COLOR_RESET << endl;
+        cout << COLOR_INFO << "[CREACIÓN] Proceso PID=" << nuevo_proceso.pid 
+             << " (" << tamano_proceso << " MB, " << num_paginas << " páginas)" << COLOR_RESET << endl;
         
         // Verificar si hay suficiente memoria total (RAM + SWAP)
-        int free_ram = count(ram_frames.begin(), ram_frames.end(), -1);
-        int free_swap = count(swap_frames.begin(), swap_frames.end(), -1);
+        int ram_libre = count(marcos_ram.begin(), marcos_ram.end(), -1);
+        int swap_libre = count(marcos_swap.begin(), marcos_swap.end(), -1);
         
-        if (free_ram + free_swap < page_count) {
+        if (ram_libre + swap_libre < num_paginas) {
             cout << COLOR_ERROR << "[ERROR] Memoria insuficiente para proceso PID=" 
-                 << new_process.pid << COLOR_RESET << endl;
+                 << nuevo_proceso.pid << COLOR_RESET << endl;
             return false;
         }
         
         // Asignar páginas del proceso
-        for (int i = 0; i < page_count; ++i) {
-            Page new_page(new_process.pid, i);
-            int page_index = pages.size();
+        for (int i = 0; i < num_paginas; ++i) {
+            Pagina nueva_pagina(nuevo_proceso.pid, i, siguiente_id_pagina++);
+            int indice_pagina = paginas.size();
             
             // Intentar cargar en RAM primero (política de asignación)
-            int free_frame = findFreeFrame(ram_frames);
-            if (free_frame != -1) {
+            int marco_libre = encontrarMarcoLibre(marcos_ram);
+            if (marco_libre != -1) {
                 // Hay espacio en RAM
-                new_page.in_ram = true;
-                new_page.frame_index = free_frame;
-                new_page.load_time = load_counter++; // Marcar tiempo de carga para FIFO
+                nueva_pagina.en_ram = true;
+                nueva_pagina.indice_marco = marco_libre;
+                nueva_pagina.tiempo_carga = contador_carga++; // Marcar tiempo de carga para FIFO
                 
-                ram_frames[free_frame] = page_index; // Asignar frame en RAM
-                cout << COLOR_RAM << "  → Página " << i << " cargada en RAM (frame " 
-                     << free_frame << ")" << COLOR_RESET << endl;
+                marcos_ram[marco_libre] = indice_pagina; // Asignar marco en RAM
+                cout << COLOR_RAM << "  → Página " << nueva_pagina.id_global 
+                     << " (PID=" << nuevo_proceso.pid << "-" << i 
+                     << ") cargada en RAM (marco " << marco_libre << ")" << COLOR_RESET << endl;
             } else {
                 // RAM llena, usar SWAP
-                free_frame = findFreeFrame(swap_frames);
-                if (free_frame == -1) {
-                    cout << COLOR_ERROR << "  → ERROR: No hay frames libres en SWAP" << COLOR_RESET << endl;
+                marco_libre = encontrarMarcoLibre(marcos_swap);
+                if (marco_libre == -1) {
+                    cout << COLOR_ERROR << "  → ERROR: No hay marcos libres en SWAP" << COLOR_RESET << endl;
                     return false;
                 }
-                new_page.in_ram = false;
-                new_page.swap_index = free_frame;
+                nueva_pagina.en_ram = false;
+                nueva_pagina.indice_swap = marco_libre;
                 
-                swap_frames[free_frame] = page_index; // Asignar frame en SWAP
-                cout << COLOR_SWAP << "  → Página " << i << " asignada a SWAP (frame " 
-                     << free_frame << ")" << COLOR_RESET << endl;
+                marcos_swap[marco_libre] = indice_pagina; // Asignar marco en SWAP
+                cout << COLOR_SWAP << "  → Página " << nueva_pagina.id_global 
+                     << " (PID=" << nuevo_proceso.pid << "-" << i 
+                     << ") asignada a SWAP (marco " << marco_libre << ")" << COLOR_RESET << endl;
             }
             
             // Agregar página a la lista global y al proceso
-            pages.push_back(new_page);
-            new_process.page_indices.push_back(page_index);
+            paginas.push_back(nueva_pagina);
+            nuevo_proceso.indices_paginas.push_back(indice_pagina);
         }
         
         // Agregar proceso a la lista
-        processes.push_back(new_process);
-        processes_created++;
+        procesos.push_back(nuevo_proceso);
+        procesos_creados++;
         return true;
     }
 
     // Finaliza un proceso aleatorio y libera su memoria
-    void finishRandomProcess() {
+    void finalizarProcesoAleatorio() {
         // Obtener índices de procesos activos
-        vector<int> active_indices;
-        for (size_t i = 0; i < processes.size(); ++i) {
-            if (processes[i].active) {
-                active_indices.push_back(i);
+        vector<int> indices_activos;
+        for (size_t i = 0; i < procesos.size(); ++i) {
+            if (procesos[i].activo) {
+                indices_activos.push_back(i);
             }
         }
         
-        if (active_indices.empty()) {
+        if (indices_activos.empty()) {
             cout << COLOR_INFO << "[FINALIZACIÓN] No hay procesos activos" << COLOR_RESET << endl;
             return;
         }
         
         // Seleccionar proceso aleatorio para finalizar
-        uniform_int_distribution<int> dist(0, active_indices.size() - 1);
-        int process_index = active_indices[dist(random_generator)];
-        Process& process = processes[process_index];
+        uniform_int_distribution<int> distribucion(0, indices_activos.size() - 1);
+        int indice_proceso = indices_activos[distribucion(generador_aleatorio)];
+        Proceso& proceso = procesos[indice_proceso];
         
         cout << COLOR_INFO << "[FINALIZACIÓN] Terminando proceso PID=" 
-             << process.pid << COLOR_RESET << endl;
+             << proceso.pid << COLOR_RESET << endl;
         
         // Liberar todas las páginas del proceso
-        for (int page_index : process.page_indices) {
-            Page& page = pages[page_index];
-            if (page.in_ram) {
-                ram_frames[page.frame_index] = -1; // Liberar frame en RAM
-                cout << COLOR_RAM << "  → Liberada página " << page.page_id << " de RAM (frame " << page.frame_index << ")" << COLOR_RESET << endl;
+        for (int indice_pagina : proceso.indices_paginas) {
+            Pagina& pagina = paginas[indice_pagina];
+            if (pagina.en_ram) {
+                marcos_ram[pagina.indice_marco] = -1; // Liberar marco en RAM
+                cout << COLOR_RAM << "  → Liberada página " << pagina.id_global 
+                     << " (PID=" << pagina.pid << "-" << pagina.id_pagina 
+                     << ") de RAM (marco " << pagina.indice_marco << ")" << COLOR_RESET << endl;
             } else {
-                swap_frames[page.swap_index] = -1; // Liberar frame en SWAP
-                cout << COLOR_SWAP << "  → Liberada página " << page.page_id << " de SWAP (frame " << page.swap_index << ")" << COLOR_RESET << endl;
+                marcos_swap[pagina.indice_swap] = -1; // Liberar marco en SWAP
+                cout << COLOR_SWAP << "  → Liberada página " << pagina.id_global 
+                     << " (PID=" << pagina.pid << "-" << pagina.id_pagina 
+                     << ") de SWAP (marco " << pagina.indice_swap << ")" << COLOR_RESET << endl;
             }
             // Marcar página como liberada (pid = -1)
-            page.pid = -1;
+            pagina.pid = -1;
         }
         
         // Marcar proceso como inactivo y limpiar sus páginas
-        process.active = false;
-        process.page_indices.clear();
-        processes_finished++;
+        proceso.activo = false;
+        proceso.indices_paginas.clear();
+        procesos_finalizados++;
     }
 
-    // Simulamos un acceso a memoria (puede causar page fault)
-    bool simulateMemoryAccess() {
+    // Simulamos un acceso a memoria (puede causar fallo de página)
+    bool simularAccesoMemoria() {
         // Obtener índices de procesos activos
-        vector<int> active_indices;
-        for (size_t i = 0; i < processes.size(); ++i) {
-            if (processes[i].active) {
-                active_indices.push_back(i);
+        vector<int> indices_activos;
+        for (size_t i = 0; i < procesos.size(); ++i) {
+            if (procesos[i].activo) {
+                indices_activos.push_back(i);
             }
         }
         
-        if (active_indices.empty()) {
+        if (indices_activos.empty()) {
             cout << COLOR_INFO << "[ACCESO] No hay procesos activos" << COLOR_RESET << endl;
             return true;
         }
         
-        // Buscamos específicamente páginas en SWAP para forzar page faults
-        int chosen_index = -1;
-        int page_to_access = -1;
-        bool found_in_swap = false;
+        // Buscamos específicamente páginas en SWAP para forzar fallos de página
+        int indice_elegido = -1;
+        int pagina_acceder = -1;
+        bool encontrado_en_swap = false;
         
-        // Primero buscar procesos con páginas en SWAP con esto de aca demostramos los page faults gordito 
-        for (int idx : active_indices) {
-            Process& p = processes[idx];
-            for (int i = 0; i < p.page_count; ++i) {
-                int page_idx = p.page_indices[i];
-                if (!pages[page_idx].in_ram) {
-                    chosen_index = idx;
-                    page_to_access = i;
-                    found_in_swap = true;
+        // Primero buscar procesos con páginas en SWAP
+        for (int idx : indices_activos) {
+            Proceso& p = procesos[idx];
+            for (int i = 0; i < p.num_paginas; ++i) {
+                int indice_pag = p.indices_paginas[i];
+                if (!paginas[indice_pag].en_ram) {
+                    indice_elegido = idx;
+                    pagina_acceder = i;
+                    encontrado_en_swap = true;
                     break;
                 }
             }
-            if (found_in_swap) break;
+            if (encontrado_en_swap) break;
         }
         
-        // Si no hay páginas en swap, elegir proceso y página aleatoria tipo sexo
-        if (!found_in_swap) {
-            uniform_int_distribution<int> proc_dist(0, active_indices.size() - 1);
-            chosen_index = active_indices[proc_dist(random_generator)];
-            Process& p = processes[chosen_index];
-            uniform_int_distribution<int> page_dist(0, p.page_count - 1);
-            page_to_access = page_dist(random_generator);
+        // Si no hay páginas en swap, elegir proceso y página aleatoria
+        if (!encontrado_en_swap) {
+            uniform_int_distribution<int> dist_proceso(0, indices_activos.size() - 1);
+            indice_elegido = indices_activos[dist_proceso(generador_aleatorio)];
+            Proceso& p = procesos[indice_elegido];
+            uniform_int_distribution<int> dist_pagina(0, p.num_paginas - 1);
+            pagina_acceder = dist_pagina(generador_aleatorio);
         }
         
         // Obtener la página específica
-        Process& process = processes[chosen_index];
-        int page_index = process.page_indices[page_to_access];
-        Page& page = pages[page_index];
+        Proceso& proceso = procesos[indice_elegido];
+        int indice_pagina = proceso.indices_paginas[pagina_acceder];
+        Pagina& pagina = paginas[indice_pagina];
         
-        cout << COLOR_INFO << "[ACCESO] PID=" << process.pid 
-             << " → Página: " << page_to_access 
-             << " → En RAM: " << (page.in_ram ? "Sí" : "No") << COLOR_RESET << endl;
+        cout << COLOR_INFO << "[ACCESO] PID=" << proceso.pid 
+             << " → Página: " << pagina.id_global << " (local:" << pagina.id_pagina << ")"
+             << " → En RAM: " << (pagina.en_ram ? "Sí" : "No") << COLOR_RESET << endl;
         
         // Si la página ya está en RAM, acceso normal
-        if (page.in_ram) {
-            cout << COLOR_RAM << "  → Página YA en RAM (frame " << page.frame_index << ")" << COLOR_RESET << endl;
+        if (pagina.en_ram) {
+            cout << COLOR_RAM << "  → Página " << pagina.id_global 
+                 << " YA en RAM (marco " << pagina.indice_marco << ")" << COLOR_RESET << endl;
             return true;
         }
         
-        // esto es para los page faults
-        cout << COLOR_FAULT << "  → PAGE FAULT! Página no está en RAM" << COLOR_RESET << endl;
-        page_faults++; // Incrementar contador de page faults
+        // Esto es para los fallos de página
+        cout << COLOR_FALLO << "  → FALLO DE PÁGINA! Página " << pagina.id_global 
+             << " no está en RAM" << COLOR_RESET << endl;
+        fallos_pagina++; // Incrementar contador de fallos de página
         
-        // Buscar frame libre en RAM
-        int free_frame = findFreeFrame(ram_frames);
+        // Buscar marco libre en RAM
+        int marco_libre = encontrarMarcoLibre(marcos_ram);
         
-        if (free_frame == -1) {
+        if (marco_libre == -1) {
             // RAM llena, necesitamos reemplazar una página usando FIFO
-            cout << COLOR_FAULT << "  → RAM llena, buscando víctima para reemplazar..." << COLOR_RESET << endl;
-            int victim_index = chooseVictimPage();
+            cout << COLOR_FALLO << "  → RAM llena, buscando víctima para reemplazar..." << COLOR_RESET << endl;
+            int indice_victima = elegirPaginaVictima();
             
-            if (victim_index == -1) {
+            if (indice_victima == -1) {
                 cout << COLOR_ERROR << "  → ERROR: No se encontró víctima para reemplazar" << COLOR_RESET << endl;
                 return false;
             }
             
-            Page& victim = pages[victim_index];
-            cout << COLOR_SWAP << "  → Víctima seleccionada: Página " << victim.page_id << " del PID=" << victim.pid 
-                 << " (frame " << victim.frame_index << ")" << COLOR_RESET << endl;
+            Pagina& victima = paginas[indice_victima];
+            cout << COLOR_SWAP << "  → Víctima seleccionada: Página " << victima.id_global 
+                 << " (PID=" << victima.pid << "-" << victima.id_pagina 
+                 << ") (marco " << victima.indice_marco << ")" << COLOR_RESET << endl;
             
             // Mover víctima a SWAP
-            int free_swap_frame = findFreeFrame(swap_frames);
-            if (free_swap_frame == -1) {
+            int marco_swap_libre = encontrarMarcoLibre(marcos_swap);
+            if (marco_swap_libre == -1) {
                 cout << COLOR_ERROR << "  → ERROR: No hay espacio en SWAP" << COLOR_RESET << endl;
                 return false;
             }
             
             // Realizar swap-out de la víctima
-            swap_frames[free_swap_frame] = victim_index;
-            ram_frames[victim.frame_index] = -1; // Liberar frame en RAM
+            marcos_swap[marco_swap_libre] = indice_victima;
+            marcos_ram[victima.indice_marco] = -1; // Liberar marco en RAM
             
-            victim.in_ram = false;
-            victim.swap_index = free_swap_frame;
-            cout << COLOR_SWAP << "  → Víctima movida a SWAP (frame " << free_swap_frame << ")" << COLOR_RESET << endl;
+            victima.en_ram = false;
+            victima.indice_swap = marco_swap_libre;
+            cout << COLOR_SWAP << "  → Víctima movida a SWAP (marco " << marco_swap_libre << ")" << COLOR_RESET << endl;
             
-            free_frame = victim.frame_index; // Usar el frame liberado
-            victim.frame_index = -1;
+            marco_libre = victima.indice_marco; // Usar el marco liberado
+            victima.indice_marco = -1;
         }
         
-        // Mover la página solicitada a RAM lo pense como un swap-in
-        if (page.swap_index != -1) {
-            swap_frames[page.swap_index] = -1;  // Liberar espacio en SWAP
-            cout << COLOR_SWAP << "  → Página liberada de SWAP (frame " << page.swap_index << ")" << COLOR_RESET << endl;
+        // Mover la página solicitada a RAM (swap-in)
+        if (pagina.indice_swap != -1) {
+            marcos_swap[pagina.indice_swap] = -1;  // Liberar espacio en SWAP
+            cout << COLOR_SWAP << "  → Página " << pagina.id_global 
+                 << " liberada de SWAP (marco " << pagina.indice_swap << ")" << COLOR_RESET << endl;
         }
         
         // Actualizar estado de la página
-        page.in_ram = true;
-        page.frame_index = free_frame;
-        page.swap_index = -1;
-        page.load_time = load_counter++; // Actualizar tiempo de carga para FIFO
+        pagina.en_ram = true;
+        pagina.indice_marco = marco_libre;
+        pagina.indice_swap = -1;
+        pagina.tiempo_carga = contador_carga++; // Actualizar tiempo de carga para FIFO
         
-        ram_frames[free_frame] = page_index; // Asignar frame en RAM
+        marcos_ram[marco_libre] = indice_pagina; // Asignar marco en RAM
         
-        cout << COLOR_RAM << "  → Página movida a RAM (frame " << free_frame << ")" << COLOR_RESET << endl;
+        cout << COLOR_RAM << "  → Página " << pagina.id_global 
+             << " movida a RAM (marco " << marco_libre << ")" << COLOR_RESET << endl;
         return true;
     }
 
     // Muestra el estado actual del sistema
-    void printStatus() {
+    void mostrarEstado() {
         // Calcular uso de RAM
-        int ram_used = ram_frames.size() - count(ram_frames.begin(), ram_frames.end(), -1);
+        int ram_usada = marcos_ram.size() - count(marcos_ram.begin(), marcos_ram.end(), -1);
         // Calcular uso de SWAP
-        int swap_used = swap_frames.size() - count(swap_frames.begin(), swap_frames.end(), -1);
+        int swap_usada = marcos_swap.size() - count(marcos_swap.begin(), marcos_swap.end(), -1);
         // Contar procesos activos
-        int active_processes = 0;
-        for (const auto& p : processes) {
-            if (p.active) active_processes++;
+        int procesos_activos = 0;
+        for (const auto& p : procesos) {
+            if (p.activo) procesos_activos++;
         }
         
         // Contar páginas actualmente en SWAP
-        int pages_in_swap = 0;
-        for (const auto& page : pages) {
-            if (!page.in_ram && page.pid != -1) {
-                pages_in_swap++;
+        int paginas_en_swap = 0;
+        for (const auto& pagina : paginas) {
+            if (!pagina.en_ram && pagina.pid != -1) {
+                paginas_en_swap++;
             }
         }
         
         // Mostrar estado completo
-        cout << COLOR_INFO << "[ESTADO] RAM: " << ram_used << "/" << ram_frames.size()
-             << " | SWAP: " << swap_used << "/" << swap_frames.size()
-             << " | Procesos: " << active_processes
-             << " | Páginas en SWAP: " << pages_in_swap
-             << " | Page Faults: " << page_faults << COLOR_RESET << endl;
+        cout << COLOR_INFO << "[ESTADO] RAM: " << ram_usada << "/" << marcos_ram.size()
+             << " | SWAP: " << swap_usada << "/" << marcos_swap.size()
+             << " | Procesos: " << procesos_activos
+             << " | Páginas en SWAP: " << paginas_en_swap
+             << " | Fallos de Página: " << fallos_pagina 
+             << " | Total páginas: " << paginas.size() << COLOR_RESET << endl;
     }
 
     // Función principal que ejecuta la simulación
-    void runSimulation() {
-        auto start_time = chrono::steady_clock::now();
-        auto last_creation = start_time;
-        auto last_periodic = start_time;
+    void ejecutarSimulacion() {
+        auto tiempo_inicio = chrono::steady_clock::now();
+        auto ultima_creacion = tiempo_inicio;
+        auto ultimo_periodico = tiempo_inicio;
         
         cout << COLOR_INFO << "=== INICIANDO SIMULACIÓN ===" << COLOR_RESET << endl;
         cout << COLOR_INFO << "Nota: Los eventos periódicos (accesos y finalizaciones) comenzarán después de 30 segundos" << COLOR_RESET << endl;
         
         // Bucle principal de simulación
         while (true) {
-            auto current_time = chrono::steady_clock::now();
-            auto elapsed_total = chrono::duration_cast<chrono::seconds>(current_time - start_time).count();
-            auto elapsed_since_create = chrono::duration_cast<chrono::seconds>(current_time - last_creation).count();
-            auto elapsed_since_periodic = chrono::duration_cast<chrono::seconds>(current_time - last_periodic).count();
+            auto tiempo_actual = chrono::steady_clock::now();
+            auto tiempo_total = chrono::duration_cast<chrono::seconds>(tiempo_actual - tiempo_inicio).count();
+            auto tiempo_desde_creacion = chrono::duration_cast<chrono::seconds>(tiempo_actual - ultima_creacion).count();
+            auto tiempo_desde_periodico = chrono::duration_cast<chrono::seconds>(tiempo_actual - ultimo_periodico).count();
             
             // Crear proceso cada 2 segundos
-            if (elapsed_since_create >= 2 && processes_created < 8) {
-                if (!createProcess()) {
+            if (tiempo_desde_creacion >= 2 && procesos_creados < 8) {
+                if (!crearProceso()) {
                     cout << COLOR_ERROR << "No se puede crear más procesos. Continuando simulación..." << COLOR_RESET << endl;
                 }
-                printStatus();
-                last_creation = current_time;
+                mostrarEstado();
+                ultima_creacion = tiempo_actual;
             }
             
-            // esto de aca sirve para hacer eventos periodicos cada 5
-            
-            if (elapsed_total >= 10 && elapsed_since_periodic >= 5) {
+            // Hacer eventos periódicos cada 5 segundos después de 30 segundos
+            if (tiempo_total >= 10 && tiempo_desde_periodico >= 5) {
                 cout << COLOR_INFO << "\n--- EVENTOS PERIÓDICOS (cada 5 segundos) ---" << COLOR_RESET << endl;
                 
-                // Finalizar proceso aleatorio ojo solo si hay proceso gordito
-                if (processes_created > 0) {
-                    finishRandomProcess();
-                    printStatus();
+                // Finalizar proceso aleatorio (solo si hay procesos)
+                if (procesos_creados > 0) {
+                    finalizarProcesoAleatorio();
+                    mostrarEstado();
                 }
                 
-                // Simular acceso a memoria y obviamente aca lo mismo
-                bool has_active = false;
-                for (const auto& p : processes) {
-                    if (p.active) {
-                        has_active = true;
+                // Simular acceso a memoria
+                bool hay_activos = false;
+                for (const auto& p : procesos) {
+                    if (p.activo) {
+                        hay_activos = true;
                         break;
                     }
                 }
                 
-                if (has_active) {
+                if (hay_activos) {
                     cout << COLOR_INFO << "--- ACCESO A MEMORIA ALEATORIO ---" << COLOR_RESET << endl;
-                    if (!simulateMemoryAccess()) {
+                    if (!simularAccesoMemoria()) {
                         cout << COLOR_ERROR << "Error en acceso a memoria. Continuando..." << COLOR_RESET << endl;
                     }
-                    printStatus();
+                    mostrarEstado();
                 }
                 
-                last_periodic = current_time;
+                ultimo_periodico = tiempo_actual;
             }
             
             // Verificar si hay memoria disponible 
-            int free_ram = count(ram_frames.begin(), ram_frames.end(), -1);
-            int free_swap = count(swap_frames.begin(), swap_frames.end(), -1);
+            int ram_libre = count(marcos_ram.begin(), marcos_ram.end(), -1);
+            int swap_libre = count(marcos_swap.begin(), marcos_swap.end(), -1);
             
-            if (free_ram == 0 && free_swap == 0) {
+            if (ram_libre == 0 && swap_libre == 0) {
                 cout << COLOR_ERROR << "Memoria agotada. Finalizando simulación." << COLOR_RESET << endl;
                 break;
             }
             
             // Terminar después de 60 segundos 
-            if (elapsed_total >= 60) {
+            if (tiempo_total >= 60) {
                 cout << COLOR_INFO << "Tiempo de simulación completado. Finalizando." << COLOR_RESET << endl;
                 break;
             }
             
-            // Un sleep para el cpu jeje
+            // Pausa para no sobrecargar la CPU
             this_thread::sleep_for(chrono::milliseconds(500));
         }
         
         // Mostrar estadísticas finales
-        auto final_time = chrono::steady_clock::now();
-        auto total_duration = chrono::duration_cast<chrono::seconds>(final_time - start_time).count();
+        auto tiempo_final = chrono::steady_clock::now();
+        auto duracion_total = chrono::duration_cast<chrono::seconds>(tiempo_final - tiempo_inicio).count();
         
         cout << COLOR_INFO << "\n=== ESTADÍSTICAS FINALES ===" << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Procesos creados: " << processes_created << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Procesos finalizados: " << processes_finished << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Page faults: " << page_faults << COLOR_RESET << endl;
-        cout << COLOR_INFO << "Tiempo total de simulación: " << total_duration << " segundos" << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Procesos creados: " << procesos_creados << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Procesos finalizados: " << procesos_finalizados << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Fallos de página: " << fallos_pagina << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Páginas totales creadas: " << paginas.size() << COLOR_RESET << endl;
+        cout << COLOR_INFO << "Tiempo total de simulación: " << duracion_total << " segundos" << COLOR_RESET << endl;
         cout << COLOR_INFO << "============================" << COLOR_RESET << endl;
     }
 };
 
 // ============================================================================
-// FUNCIÓN MAIN - PUNTO DE ENTRADA DEL PROGRAMA
+// FUNCIÓN PRINCIPAL - PUNTO DE ENTRADA DEL PROGRAMA
 // ============================================================================
 
 int main() {
@@ -508,32 +528,32 @@ int main() {
     cout << "Implementación de memoria virtual con política de reemplazo FIFO" << endl;
     cout << "================================================================" << endl;
     
-    int physical_memory, page_size, min_process, max_process;
+    int memoria_fisica, tamano_pagina, proceso_min, proceso_max;
     
     // Solicitar parámetros de configuración al usuario
     cout << "Tamaño memoria física (MB): ";
-    cin >> physical_memory;
+    cin >> memoria_fisica;
     cout << "Tamaño de página (MB): ";
-    cin >> page_size;
+    cin >> tamano_pagina;
     cout << "Tamaño mínimo de proceso (MB): ";
-    cin >> min_process;
+    cin >> proceso_min;
     cout << "Tamaño máximo de proceso (MB): ";
-    cin >> max_process;
+    cin >> proceso_max;
     
     // Validaciones básicas de entrada
-    if (physical_memory <= 0 || page_size <= 0 || min_process <= 0 || max_process <= 0) {
+    if (memoria_fisica <= 0 || tamano_pagina <= 0 || proceso_min <= 0 || proceso_max <= 0) {
         cout << COLOR_ERROR << "Error: Todos los valores deben ser positivos" << COLOR_RESET << endl;
         return 1;
     }
     
-    if (min_process > max_process) {
+    if (proceso_min > proceso_max) {
         cout << COLOR_ERROR << "Error: El tamaño mínimo no puede ser mayor al máximo" << COLOR_RESET << endl;
         return 1;
     }
     
     // Crear y ejecutar el simulador
-    MemorySimulator simulator(physical_memory, page_size, min_process, max_process);
-    simulator.runSimulation();
+    SimuladorMemoria simulador(memoria_fisica, tamano_pagina, proceso_min, proceso_max);
+    simulador.ejecutarSimulacion();
     
     return 0;
 }
